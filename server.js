@@ -191,7 +191,7 @@ app.get('/', (request, response) => {
                     }
                     response.status(status).send(content)
                 } else {
-                    userService.persist(new User({ firstname, lastname, email, password, birthday, sex, attempts: 0, next: -1 })).then(id => {
+                    userService.persist({ firstname, lastname, email, password, birthday, sex, attempts: 0, next: -1 }).then(id => {
                         // create token
                         const token = jwt.sign({ id, email }, PRIVATE_KEY, { algorithm: 'RS256' })
                         const refreshToken = jwt.sign({ id, email }, REFRESH_KEY)
