@@ -4,6 +4,7 @@
   "description": "api de test pour être un microtasker",
   "main": "server.js",
   "scripts": {
+    "start": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "rinelfi",
@@ -13,5 +14,8 @@
     "jsonwebtoken": "^8.5.1",
     "mongodb": "^4.2.0",
     "mongoose": "^6.0.13"
+  },
+  "engines": {
+    "node": "14.18.1"
   }
 }
