@@ -1,32 +1,31 @@
 const express = require('express')
-const { MongoClient } = require('mongodb')
 const path = require('path')
 const crypto = require('crypto')
 const jwt = require('jsonwebtoken')
+const { ObjectId } = require('bson')
 const app = express()
-const User = require('./class/user')
 
 /**
  * services
  */
-const usermanager = require('./class/usermanager')
-const tokenmanager = require('./class/tokenmanager.js')
-const { ObjectId } = require('bson')
+const usermanager = require('./service/user-manager')
+const tokenmanager = require('./service/token-manager.js')
 
 /**
- * statical data
+ * constants
  */
-const LOCAL_DATABASE = `mongodb://localhost:36017/`
-// const DATABASE_URI = `mongodb+srv://rinelfi:rinelfi@cluster0.8jg3l.mongodb.net/myFirstDatabase?retryWrites=true&w=majority`
+const URI = `mongodb://localhost:36017/`
+// const URI = `mongodb+srv://rinelfi:rinelfi@cluster0.8jg3l.mongodb.net/myFirstDatabase?retryWrites=true&w=majority`
 const DB_NAME = 'sayna-test-api'
-const DB_CONNECT = new MongoClient(LOCAL_DATABASE)
-const userService = new usermanager(DB_CONNECT, DB_NAME)
-const tokenService = new tokenmanager(DB_CONNECT, DB_NAME)
-const PORT = 3001
+const userService = new usermanager(URI, DB_NAME)
+const tokenService = new tokenmanager(URI, DB_NAME)
+const PORT = 5000 // application listening port
 const MAX_AUTHORIZED_ATTEMPS = 3
 const NEXT_TRY = 1 // 1 hour
-const WAITING_TIMESTAMP = 3600000 * NEXT_TRY  // 3600000 was added at the begining for optimization
+const WAITING_TIMESTAMP = 3600000 * NEXT_TRY  // 3600000 ms is 1 hour
+// token encryption using RSA256
 const { publicKey: PUBLIC_KEY, privateKey: PRIVATE_KEY } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
+// hash for obtaining new token
 const REFRESH_KEY = crypto.randomBytes(64).toString('hex')
 
 /**
@@ -35,6 +34,9 @@ const REFRESH_KEY = crypto.randomBytes(64).toString('hex')
 app.use(express.json())
 
 function checkToken(request, response, next) {
+    /**
+     * 
+     */
     const { token } = request.params
     if (token === null) {
         response.status(401).json({
@@ -44,7 +46,6 @@ function checkToken(request, response, next) {
     } else {
         jwt.verify(token, PUBLIC_KEY, { algorithms: 'RS256' }, (error, callback) => {
             if (error && error.name === 'JsonWebTokenError') {
-                console.log('bla bla')
                 response.status(401).json({
                     error: true,
                     message: `Le token envoyé n'est pas comforme`
@@ -72,9 +73,15 @@ function checkToken(request, response, next) {
  * application
  */
 app.get('/', (request, response) => {
-    let user = new User()
     response.sendFile(path.join(__dirname, 'html', 'index.html'))
 }).post('/login', (request, response) => {
+    /**
+     * check first if fields are filled
+     * then try to match email with database record
+     * if it exists then match password too
+     * user have to give right credential unless account will be freezed after a certain number of attempts
+     * if everithing is OK so create a token for authentication with a refresh token 
+     */
     const { email, password } = request.body
 
     if (email === '' || password === '') {
@@ -90,20 +97,18 @@ app.get('/', (request, response) => {
             if (emailExists) {
                 userService.findByEmail(email).then(user => {
                     const id = user._id
-                    const selectedUser = new User(user)
-                    if (selectedUser.next > 0) {
+                    if (user.next > 0) {
                         // account is freezed for a while
-                        const currentTimestamp = Date.now()
-                        const date = new Date(selectedUser.next - currentTimestamp)
+                        const date = new Date(user.next - Date.now())
                         response.status(409).json({
                             error: true,
-                            message: `Trop de tentative sur l'email '${selectedUser.email}' - Veuillez patienter ${date.getUTCHours()}h ${date.getMinutes()}mn ${date.getSeconds()}s`
+                            message: `Trop de tentative sur l'email '${user.email}' - Veuillez patienter ${date.getUTCHours()}h ${date.getMinutes()}mn ${date.getSeconds()}s`
                         })
-                    } else if (password === selectedUser.password) {
+                    } else if (password === user.password) {
                         // initiate attempts and next attributes
-                        selectedUser.attempts = 0
-                        selectedUser.next = -1
-                        userService.update(id, selectedUser).then(() => {
+                        user.attempts = 0
+                        user.next = -1
+                        userService.update(id, user).then(() => {
                             // create token
                             const token = jwt.sign({ id, email }, PRIVATE_KEY, { algorithm: 'RS256' })
                             const refreshToken = jwt.sign({ id, email }, REFRESH_KEY)
@@ -119,16 +124,17 @@ app.get('/', (request, response) => {
                             })
                         })
                     } else {
-                        if (selectedUser.attempts >= MAX_AUTHORIZED_ATTEMPS) {
-                            selectedUser.next = Date.now() + WAITING_TIMESTAMP
-                            userService.update(id, selectedUser)
+                        if (user.attempts >= MAX_AUTHORIZED_ATTEMPS) {
+                            user.next = Date.now() + WAITING_TIMESTAMP
+                            user.attempts = 0
+                            userService.update(id, user)
                             response.status(409).json({
                                 error: true,
-                                message: `Trop de tentative sur l'email '${selectedUser.email}' - Veuillez patienter ${NEXT_TRY}h`
+                                message: `Trop de tentative sur l'email '${user.email}' - Veuillez patienter ${NEXT_TRY}h`
                             })
                         } else {
-                            selectedUser.incrementAttemps()
-                            userService.update(id, selectedUser)
+                            user.attempts++
+                            userService.update(id, user)
                             response.status(401).json({
                                 error: true,
                                 message: `Votre email ou password est erroné`
@@ -148,6 +154,13 @@ app.get('/', (request, response) => {
         })
     }
 }).post('/register', (request, response) => {
+    /**
+     * register a new user
+     * check first if required fields are not empty otherwise throw an error
+     * then check if data format are corrects otherwise throw an error
+     * match given email address to the database record ensuring that no one is using it yet otherwise throw an error
+     * if everything is OK create token and send it to user
+     */
     const { firstname, lastname, email, password, birthday, sex } = request.body
     const structure = { firstname, lastname, email, password, birthday, sex }
     let status = 200, content = { error: false, message: '' }
@@ -165,7 +178,7 @@ app.get('/', (request, response) => {
             status = 401
             content = {
                 error: true,
-                message: `L'un des données ibligatoires ne sont pas conformes`
+                message: `L'une des données ibligatoires ne sont pas conformes`
             }
             response.status(status).send(content)
         } else {
@@ -200,6 +213,9 @@ app.get('/', (request, response) => {
         }
     } else response.status(status).send(content)
 }).get('/user/:token', checkToken, (request, response) => {
+    /**
+     * get user information from given token
+     */
     let { email } = jwt.verify(request.params.token, PUBLIC_KEY, { algorithms: 'RS256' })
     userService.findByEmail(email).then(user => {
         response.status(200).json({
@@ -215,6 +231,11 @@ app.get('/', (request, response) => {
         })
     })
 }).put('/user/:token', checkToken, (request, response) => {
+    /**
+     * update user information
+     * check first if all required data are presents otherwise throw error
+     * then select fields whose data are provided and change it
+     */
     const { firstname, lastname, birthday, sex } = request.body
     const user = { firstname, lastname, birthday, sex }
     const update = {}
@@ -239,6 +260,10 @@ app.get('/', (request, response) => {
     }
 }).put('/password/:token', checkToken, (request, response) => {
     const { password } = request.body
+    /**
+     * update user password
+     * check first if data is provided otherwise throw error
+     */
     if (typeof password === 'undefined' || password === '') {
         response.status(401).json({
             error: true,
@@ -253,14 +278,19 @@ app.get('/', (request, response) => {
             })
         })
     }
-}).get('/users/:token', (request, response) => {
-    const { token } = request.params
-    let status = 200, content = { error: false, message: '' }
-    response.status(status).send(content)
+}).get('/users/:token', checkToken, (request, response) => {
+    // return all users list
+    userService.getAll().then(users => {
+        response.status(200).json({
+            error: false,
+            users
+        })
+    })
 }).delete('/user/:token', (request, response) => {
+    // delete token then user will be disconnected
     const { token } = request.params
-
-    response.json({
+    tokenService.delete(token)
+    response.status(200).json({
         error: false,
         message: `L'utiliateur a été déconnecté avec succès`
     })
@@ -281,22 +311,21 @@ function emailValid(email) {
 }
 
 function dateValid(date) {
-    const yearStart = 1970
     const dateLimits = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    let valide = false
+    let valid = false
     if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(date)) {
         let [year, month, day] = date.split('-')
         year = parseInt(year, 10)
         month = parseInt(month, 10)
         day = parseInt(day, 10)
         if (month !== 2) {
-            if (day <= dateLimits[month - 1]) valide = true
+            if (day <= dateLimits[month - 1]) valid = true
         } else {
-            if (day <= 28) valide = true
-            else if (leapYear(year) && day <= 29) valide = true
+            if (day <= 28) valid = true
+            else if (leapYear(year) && day <= 29) valid = true
         }
     }
-    return valide
+    return valid
 }
 
 function leapYear(year) {
