@@ -4,18 +4,16 @@
   "description": "api de test pour être un microtasker",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js"
   },
   "author": "rinelfi",
   "license": "ISC",
   "dependencies": {
     "express": "^4.17.1",
     "jsonwebtoken": "^8.5.1",
-    "mongodb": "^4.2.0",
-    "mongoose": "^6.0.13"
+    "mongodb": "^4.2.0"
   },
   "engines": {
-    "node": "14.18.1"
+    "node": "14.x"
   }
 }
