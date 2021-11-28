@@ -14,9 +14,9 @@ const tokenmanager = require('./service/token-manager.js')
 /**
  * constants
  */
-const URI = `mongodb://localhost:36017/`
+const URI = `mongodb://09df1712e49909d01854ac32cf98e48b:09df1712e49909d01854ac32cf98e48b@11a.mongo.evennode.com:27018/?authSource=09df1712e49909d01854ac32cf98e48b&replicaSet=eu-11`
 // const URI = `mongodb+srv://rinelfi:rinelfi@cluster0.8jg3l.mongodb.net/myFirstDatabase?retryWrites=true&w=majority`
-const DB_NAME = 'sayna-test-api'
+const DB_NAME = '09df1712e49909d01854ac32cf98e48b'
 const userService = new usermanager(URI, DB_NAME)
 const tokenService = new tokenmanager(URI, DB_NAME)
 const PORT = 5000 // application listening port
